@@ -1,0 +1,41 @@
+name: Security Triage Agent
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}  # também pode ser disparado manualmente
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar o agente (scan)
+        id: scan
+        run: |
+          python -m agent.scan --path . --repo "${{ github.repository }}"
+
+      - name: Priorizar e abrir issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          python -m agent.prioritize --scan-id 1 --repo "${{ github.repository }}"
+
+      - name: Enviar resumo executivo ao Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python -m agent.notify_slack --scan-id 1
+
+      - name: Auditoria independente
+        run: |
+          python -m validation.audit_findings --scan-id 1
