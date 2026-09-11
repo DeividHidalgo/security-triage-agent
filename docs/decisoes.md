@@ -17,38 +17,39 @@ onde termina o trabalho do agente e começa o julgamento humano.
 - A estrutura inicial dos clientes de integração (`integrations/*.py`)
 - A lógica de varredura de arquivos e aplicação de regex (`agent/scan.py`, `agent/secret_patterns.py`)
 - O schema SQL inicial
+- O script de auditoria independente (`validation/audit_findings.py`)
 
 ## O que eu revisei e mudei manualmente
 
-- **Separação scan / priorize / notify em 3 comandos distintos**: a
-  primeira versão do agente fazia tudo numa função só (scan → issue →
-  slack automaticamente). Rejeitei isso porque numa empresa de verdade
-  ninguém deveria deixar um agente notificar diretoria sem um humano
-  revisar antes. Pedi para separar em 3 scripts independentes.
-- **Regras de priorização (só CRITICAL/HIGH abrem issue)**: o agente
-  originalmente sugeriu abrir issue para qualquer achado. Decidi limitar
-  a CRITICAL/HIGH para não gerar ruído — isso é uma decisão de processo,
-  não técnica, e documentei o porquê em `docs/processo-mapeado.md`.
-- **Padrões de detecção de segredo**: reduzi a lista de regex que o
-  agente propôs inicialmente (tinha ~20 padrões, vários com alto risco
-  de falso-positivo tipo "qualquer string de 8+ caracteres perto da
-  palavra 'key'"). Fiquei só com os 7 padrões mais precisos.
-- **O script de auditoria (`validation/audit_findings.py`) foi escrito
-  para NÃO reaproveitar a lógica de `scan.py`**: pedi isso explicitamente
-  ao agente. Se a auditoria chamasse as mesmas funções do scan original,
-  um bug no scan nunca seria pego pela auditoria. Por isso ela reconsulta
-  o OSV.dev de forma independente e usa SQL puro em vez de reusar
-  `storage.py` para as checagens de negócio.
-- **Modo `--dry-run`**: adicionei manualmente em `prioritize.py` e
-  `notify_slack.py` depois que percebi que eu precisava de um jeito de
-  testar o pipeline inteiro sem realmente abrir issues/mandar mensagens
-  — importante tanto para desenvolvimento quanto para rodar em CI de PR
-  (sem poluir o Slack a cada commit de teste).
+- **Separação scan / priorize / notify em 3 comandos distintos**: rejeitei
+  a ideia de um único fluxo automático (scan → issue → Slack sem parar),
+  porque numa empresa de verdade ninguém deveria deixar um agente
+  notificar diretoria sem uma etapa revisável. Pedi 3 scripts
+  independentes, cada um chamado explicitamente.
+- **Regras de priorização (só CRITICAL/HIGH abrem issue)**: decidi
+  limitar a esses dois níveis para não gerar ruído de issue para
+  MEDIUM/LOW — decisão de processo, documentada em `docs/processo-mapeado.md`.
+- **Padrões de detecção de segredo**: reduzi a lista de regex para os 7
+  padrões mais precisos, evitando falso-positivo.
+- **Auditoria independente de propósito**: pedi que `validation/audit_findings.py`
+  NÃO reaproveitasse a lógica de `scan.py`, e reconsultasse o OSV.dev do
+  zero — se a auditoria chamasse as mesmas funções do scan original, um
+  bug no scan nunca seria pego por ela.
+- **Modo `--dry-run`**: adicionado para poder testar o pipeline inteiro
+  sem realmente abrir issue/mandar mensagem, importante tanto para
+  desenvolvimento quanto para CI de PR.
+- **python-dotenv**: adicionei depois de perceber, ao testar de verdade,
+  que exigir `export` manual das variáveis de ambiente no terminal era
+  um passo de fricção desnecessário para quem fosse rodar o projeto.
 
-## Limitação conhecida, deixada de propósito
+## Testando de ponta a ponta (o que realmente aconteceu)
 
-- O agente não faz correção automática (não sobe versão de dependência,
-  não remove segredo do código). Decisão consciente: isso exige contexto
-  de negócio que o agente não tem (será que dá pra atualizar sem quebrar
-  algo?). Prefiro um agente que erra por falta de ação a um que erra por
-  excesso de autonomia numa mudança que pode quebrar produção.
+Rodei o pipeline completo em duas etapas, e documento aqui os problemas
+reais que apareceram — porque "o que deu errado e como resolvi" é tão
+relevante quanto "o que funcionou de primeira":
+
+1. **Teste offline** (`samples/demo-repo`, sem GitHub/Slack reais):
+   `scan` → `prioritize --dry-run` → `notify_slack --dry-run` →
+   `audit_findings`. A auditoria reportou **reprovado**, corretamente —
+   como tudo rodou em dry-run, nenhuma issue tinha sido de fato aberta,
+   e a auditoria pegou essa inconsistência. Isso
