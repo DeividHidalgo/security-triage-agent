@@ -54,6 +54,14 @@ def prioritize_and_file_issues(scan_id: int, repo: str, dry_run: bool = False) -
     filed = []
     client = None if dry_run else GitHubClient(repo=repo)
 
+    # Busca as issues de segurança já abertas ANTES de criar qualquer coisa nova,
+    # para não duplicar o mesmo achado em execuções repetidas (ex: dois pushes
+    # seguidos no mesmo dia). Mapeia título -> número da issue existente.
+    existing_issues_by_title: dict[str, int] = {}
+    if not dry_run and client is not None:
+        for issue in client.list_open_issues(label="security"):
+            existing_issues_by_title[issue["title"]] = issue["number"]
+
     for row in rows:
         finding = dict(row)
         if finding["severity"] not in AUTO_ISSUE_SEVERITIES:
@@ -70,10 +78,19 @@ def prioritize_and_file_issues(scan_id: int, repo: str, dry_run: bool = False) -
             filed.append({"finding_id": finding["id"], "title": title, "issue_number": None})
             continue
 
-        issue = client.create_issue(title=title, body=body, labels=["security", finding["severity"].lower()])
-        storage.set_issue_number(finding["id"], issue["number"])
-        filed.append({"finding_id": finding["id"], "title": title, "issue_number": issue["number"]})
-        print(f"issue #{issue['number']} criada: {title}")
+        if title in existing_issues_by_title:
+            issue_number = existing_issues_by_title[title]
+            storage.set_issue_number(finding["id"], issue_number)
+            filed.append({"finding_id": finding["id"], "title": title, "issue_number": issue_number})
+            print(f"issue #{issue_number} já existia para: {title} (não duplicada)")
+            continue
+
+        if client is not None:
+            issue = client.create_issue(title=title, body=body, labels=["security", finding["severity"].lower()])
+            storage.set_issue_number(finding["id"], issue["number"])
+            existing_issues_by_title[title] = issue["number"]
+            filed.append({"finding_id": finding["id"], "title": title, "issue_number": issue["number"]})
+            print(f"issue #{issue['number']} criada: {title}")
 
     return filed
 
